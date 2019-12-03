@@ -25,7 +25,9 @@ module openBF
     using DelimitedFiles
     using LinearAlgebra
     using Printf
-
+    # IMPORT PACKAGE FOR HYPERGEOMETRIC FUNCTIONS
+    using HypergeometricFunctions
+    import HypergeometricFunctions: drummond2F1
 
     """
     Heart type
@@ -152,11 +154,13 @@ module openBF
 
         vA :: Array{Float64,1}
         vQ :: Array{Float64,1}
+        vU :: Array{Float64,1}			# MODIFIED THIS LINE
 
         dU :: Array{Float64,2}
 
         slopesA :: Array{Float64,1}
         slopesQ :: Array{Float64,1}
+        slopesU :: Array{Float64,1} 		# MODIFIED THIS LINE: slope limiter for U
 
         Al :: Array{Float64,1}
         Ar :: Array{Float64,1}
@@ -164,10 +168,17 @@ module openBF
         Ql :: Array{Float64,1}
         Qr :: Array{Float64,1}
 
+	Ul :: Array{Float64,1}			# MODIFIED THIS LINE
+	Ur :: Array{Float64,1}			# MODIFIED THIS LINE
+
         Fl :: Array{Float64,2}
         Fr :: Array{Float64,2}
 
-        #Outlet type
+ 	#Catheter				# MODIFIED THIS LINE: OUTPUT OF buildVessel
+	Ac :: Array{Float64,1}
+	corr :: Float64			# MODIFIED THIS LINE: CORRECTION FACTOR FOR CATHETER
+
+ 	#Outlet type
         outlet :: String
     end
 

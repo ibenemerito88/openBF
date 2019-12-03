@@ -244,7 +244,8 @@ function buildVessel(ID :: Int, vessel_data :: Dict{Any,Any}, blood :: Blood, ju
     L = vessel_data["L"]
     E = vessel_data["E"]
 
-    Rp, Rd = computeRadii(vessel_data)
+    Rp, Rd, Rc = computeRadii(vessel_data)	# MODIFIED THIS LINE: READ CATHETER RADIUS
+
     Pext = getPext(vessel_data)
     M, dx, invDx, halfDx, invDxSq = meshVessel(vessel_data, L)
     h0 = initialiseThickness(vessel_data, M)
@@ -256,6 +257,7 @@ function buildVessel(ID :: Int, vessel_data :: Dict{Any,Any}, blood :: Blood, ju
     Q = zeros(Float64, M)
     P = zeros(Float64, M)
     A = zeros(Float64, M)
+    Ac = zeros(Float64,M)	# MODIFIED THIS LINE: DEFINITION OF CATHETER AREA (vector)
     u = zeros(Float64, M)
     c = zeros(Float64, M)
     A0 = zeros(Float64, M)
@@ -264,10 +266,13 @@ function buildVessel(ID :: Int, vessel_data :: Dict{Any,Any}, blood :: Blood, ju
     beta = zeros(Float64, M)
     vA = zeros(Float64, M+2)
     vQ = zeros(Float64, M+2)
+    vU = zeros(Float64, M+2)			# MODIFIED THIS LINE
     Al = zeros(Float64, M+2)
     Ar = zeros(Float64, M+2)
     Ql = zeros(Float64, M+2)
     Qr = zeros(Float64, M+2)
+    Ul = zeros(Float64, M+2)			# MODIFIED THIS LINE
+    Ur = zeros(Float64, M+2)			# MODIFIED THIS LINE
     wallE = zeros(Float64, M)
     gamma = zeros(Float64, M)
     slope = zeros(Float64, M)
@@ -280,6 +285,7 @@ function buildVessel(ID :: Int, vessel_data :: Dict{Any,Any}, blood :: Blood, ju
     s_inv_A0 = zeros(Float64, M)
     slopesA = zeros(Float64, M+2)
     slopesQ = zeros(Float64, M+2)
+    slopesU = zeros(Float64, M+2)		# MODIFIED THIS LINE: slope limiter for U
     Q_t = zeros(Float64, jump, 6)
     P_t = zeros(Float64, jump, 6)
     A_t = zeros(Float64, jump, 6)
@@ -318,12 +324,13 @@ function buildVessel(ID :: Int, vessel_data :: Dict{Any,Any}, blood :: Blood, ju
       inv_A0[i] = 1.0/A0[i]
       s_inv_A0[i] = sqrt(inv_A0[i])
       A[i] = A0[i]
+      Ac[i] = pi*Rc*Rc			# MODIFIED THIS LINE: compute vector Ac
       beta[i] = s_inv_A0[i]*h0*s_pi_E_over_sigma_squared
       gamma[i] = beta[i]*one_over_rho_s_p/R0[i]
       s_15_gamma[i] = sqrt(1.5*gamma[i])
       gamma_ghost[i+1] = gamma[i]
       P[i] = pressure(1.0, beta[i], Pext)
-      c[i] = waveSpeed(A[i], gamma[i])
+      c[i] = waveSpeed(A[i], gamma[i], Ac[i])		# MODIFIED THIS LINE: wave speed
       wallE[i] = 3.0*beta[i]*radius_slope*inv_A0[i]*s_pi*blood.rho_inv
       if phi != 0.0
           wallVb[i] = Cv*s_inv_A0[i]*invDxSq
@@ -349,8 +356,15 @@ function buildVessel(ID :: Int, vessel_data :: Dict{Any,Any}, blood :: Blood, ju
     UM1Q = 0.0
     UM2Q = 0.0
 
-    W1M0 = u[end] - 4.0*c[end]
-    W2M0 = u[end] + 4.0*c[end]
+    # COMPUTE CORRECTION TO RIEMANN INVARIANTS
+    if haskey(vessel_data, "Rc")
+	corr = (A[end]/Ac[end])^0.25*drummond2F1(0.25,0.5,1.5,1-A[end]/Ac[end])/2
+    else
+	corr = 1
+    end
+
+    W1M0 = u[end] - 4.0*c[end]*corr
+    W2M0 = u[end] + 4.0*c[end]*corr
 
     node2 = convert(Int, floor(M*0.25))
     node3 = convert(Int, floor(M*0.5))
@@ -387,9 +401,10 @@ function buildVessel(ID :: Int, vessel_data :: Dict{Any,Any}, blood :: Blood, ju
                   node2, node3, node4,
                   Rt, R1, R2, Cc,
                   Pcn,
-                  slope, flux, uStar, vA, vQ,
-                  dU, slopesA, slopesQ,
-                  Al, Ar, Ql, Qr, Fl, Fr,
+                  slope, flux, uStar, vA, vQ, vU,
+                  dU, slopesA, slopesQ, slopesU,
+                  Al, Ar, Ql, Qr, Ul, Ur, Fl, Fr,
+		  Ac, corr,
                   outlet)
 end
 
@@ -438,13 +453,18 @@ If only a constant lumen radius is defined, return the same value for proximal a
 distal variables, `Rp` and `Rd`, respectively.
 """
 function computeRadii(vessel :: Dict{Any,Any})
+    if ~haskey(vessel, "Rc")		# MODIFIED FROM HERE
+	Rc = 0
+    else
+	Rc = vessel["Rc"]		
+    end					# UNTIL HERE
     if ~haskey(vessel, "R0")
         Rp = vessel["Rp"]
         Rd = vessel["Rd"]
-        return Rp, Rd
+        return Rp, Rd, Rc		# MODIFIED THIS LINE
     else
         R0 = vessel["R0"]
-        return R0, R0
+        return R0, R0, Rc		# MODIFIED THIS LINE
     end
 end
 
@@ -568,10 +588,18 @@ Return
 
 where gamma_v (`gamma_profile`) is either specified in the vessel definition or
 assumed equal to `9` (plug-flow).
+
+If Rc is specified than 
+
+Return
+
+2*blood.mu*blood.rho_inv*sqrt(15)
 """
 function computeViscousTerm(vessel_data :: Dict{Any,Any}, blood :: Blood)
     if haskey(vessel_data, "gamma_profile")
         gamma_profile = vessel_data["gamma_profile"]
+    elseif haskey(vessel_data, "Rc")			# MODIFIED THIS LINE
+	return 2*blood.mu*blood.rho_inv*sqrt(15)	# MODIFIED THIS LINE
     else
         gamma_profile = 9
     end
@@ -644,3 +672,4 @@ function parseCommandline()
 
     return parse_args(s)
 end
+

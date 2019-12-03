@@ -74,7 +74,7 @@ function inletCompatibility(dt :: Float64, v :: Vessel, h :: Heart)
 	@fastmath @inbounds W11 += (W12 - W11)*(v.c[1] - v.u[1])*dt*v.invDx
 	@fastmath @inbounds W21 = 2.0*v.Q[1]/v.A[1] - W11
 
-	v.u[1], v.c[1] = inverseRiemannInvariants(W11, W21)
+	v.u[1], v.c[1] = inverseRiemannInvariants(W11, W21, v)		# MODIFIED THIS LINE
 
 	if h.inlet_type == "Q"
 		@fastmath @inbounds v.A[1] = v.Q[1]/v.u[1]
@@ -93,8 +93,8 @@ end
 Calculate Riemann invariants at the node `i` from `u` and `c`.
 """
 function riemannInvariants(i :: Int, v :: Vessel)
-  @fastmath @inbounds W1 = v.u[i] - 4.0*v.c[i]
-  @fastmath @inbounds W2 = v.u[i] + 4.0*v.c[i]
+  @fastmath @inbounds W1 = v.u[i] - 4.0*v.c[i]*v.corr		# MODIFIED THIS LINE
+  @fastmath @inbounds W2 = v.u[i] + 4.0*v.c[i]*v.corr		# MODIFIED THIS LINE
 
   return W1, W2
 end
@@ -105,9 +105,9 @@ end
 
 Calculate `u` and `c` given `W1` and `W2`
 """
-function inverseRiemannInvariants(W1 :: Float64, W2 :: Float64)
-  @fastmath u = 0.5*(W1 + W2)
-  @fastmath c = (W2 - W1)*0.125
+function inverseRiemannInvariants(W1 :: Float64, W2 :: Float64, v :: Vessel)
+  @fastmath u = 0.5*(W1 + W2)			
+  @fastmath c = (W2 - W1)*0.125/v.corr			# MODIFIED THIS LINE
 
   return u, c
 end
@@ -154,7 +154,7 @@ function outletCompatibility(dt :: Float64, v :: Vessel)
 	W2M += (W2M1 - W2M)*(v.u[end] + v.c[end])*dt/v.dx
 	W1M = v.W1M0 - v.Rt * (W2M - v.W2M0)
 
-	v.u[end], v.c[end] = inverseRiemannInvariants(W1M, W2M)
+	v.u[end], v.c[end] = inverseRiemannInvariants(W1M, W2M, v)	# MODIFIED THIS LINE
 	v.Q[end] = v.A[end]*v.u[end]
 end
 

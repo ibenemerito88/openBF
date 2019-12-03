@@ -36,8 +36,8 @@ end
 
 Compute pulse wave velocity at the given node.
 """
-function waveSpeed(A :: Float64, gamma :: Float64)
-    return sqrt(3*gamma*sqrt(A)*0.5)
+function waveSpeed(A :: Float64, gamma :: Float64, Ac :: Float64)	# MODIFIED THIS FUNCTION
+    return sqrt(3*gamma*0.5)*sqrt(A-Ac)/A^0.25
 end
 
 function waveSpeedSA(sA :: Float64, gamma :: Float64)
@@ -98,7 +98,11 @@ function solveVessel(vessel :: Vessel, blood :: Blood, dt :: Float64,
         setInletBC(current_time, dt, vessel)
     end
 
-    muscl(vessel, dt, blood)
+    if vessel.Ac[1]>0
+	musclCatheter(vessel, dt, blood)
+    else
+	muscl(vessel, dt, blood)
+    end
 end
 
 
@@ -326,4 +330,145 @@ function computeLimiter(v :: Vessel, U :: Array{Float64,2}, idx :: Int,
     end
 
     return superBee(v, dU, slopes)
+end
+
+
+"""
+    musclCatheter(v :: Vessel, dt :: Float64, b :: Blood)
+
+Run MUSCL solver along the vessel when a catheter is present.
+"""
+function musclCatheter(v :: Vessel, dt :: Float64, b :: Blood)
+    @inbounds v.vA[1] = v.U00A
+    @inbounds v.vA[end] = v.UM1A
+
+    @inbounds v.vQ[1] = v.U00Q
+    @inbounds v.vQ[end] = v.UM1Q
+
+    @fastmath @inbounds @simd for i = 2:v.M+1
+        v.vA[i] = v.A[i-1]
+#        v.vQ[i] = v.Q[i-1]	# This will be removed
+	v.vU[i] = v.u[i-1]	# MODIFIED THIS LINE
+
+    end
+
+    v.slopesA = computeLimiter(v, v.vA, v.invDx, v.dU, v.slopesA)
+#    v.slopesQ = computeLimiter(v, v.vQ, v.invDx, v.dU, v.slopesQ)
+    v.slopesU = computeLimiter(v, v.vU, v.invDx, v.dU, v.slopesU)	# MODIFIED THIS LINE
+
+
+    @fastmath @inbounds @simd for i = 1:v.M+2
+        slopeA_halfDx = v.slopesA[i]*v.halfDx
+        v.Al[i] = v.vA[i] + slopeA_halfDx
+        v.Ar[i] = v.vA[i] - slopeA_halfDx
+
+#        slopeQ_halfDX = v.slopesQ[i]*v.halfDx
+#        v.Ql[i] = v.vQ[i] + slopeQ_halfDX
+#        v.Qr[i] = v.vQ[i] - slopeQ_halfDX
+
+        slopeU_halfDx = v.slopesU[i]*v.halfDx		# MODIFIED THIS LINE
+        v.Ul[i] = v.vU[i] + slopeU_halfDx		# MODIFIED THIS LINE
+        v.Ur[i] = v.vU[i] - slopeU_halfDx		# MODIFIED THIS LINE
+
+    end
+
+    v.Fl = computeFluxCatheter(v, v.Al, v.Ul, v.Fl, b)		# MODIFIED THIS LINE
+    v.Fr = computeFluxCatheter(v, v.Ar, v.Ur, v.Fr, b)		# MODIFIED THIS LINE
+
+    @fastmath dxDt = v.dx/dt
+    @fastmath invDxDt = 1.0/dxDt
+
+    @fastmath @inbounds @simd for i = 1:v.M+1
+        v.flux[1,i] = 0.5*(v.Fr[1,i+1] + v.Fl[1,i] - dxDt*(v.Ar[i+1] - v.Al[i]))
+#        v.flux[2,i] = 0.5*(v.Fr[2,i+1] + v.Fl[2,i] - dxDt*(v.Qr[i+1] - v.Ql[i])) # REMOVE THIS
+        v.flux[2,i] = 0.5*(v.Fr[2,i+1] + v.Fl[2,i] - dxDt*(v.Ur[i+1] - v.Ul[i])) # MODIFIED THIS LINE
+    end
+
+    @fastmath @inbounds @simd for i = 2:v.M+1
+        v.uStar[1,i] = v.vA[i] + invDxDt*(v.flux[1,i-1] - v.flux[1,i])
+#        v.uStar[2,i] = v.vQ[i] + invDxDt*(v.flux[2,i-1] - v.flux[2,i])	# REMOVE THIS
+        v.uStar[2,i] = v.vU[i] + invDxDt*(v.flux[2,i-1] - v.flux[2,i])	# MODIFIED THIS LINE
+    end
+
+    @inbounds v.uStar[1,1] = v.uStar[1,2]
+    @inbounds v.uStar[2,1] = v.uStar[2,2]
+    @inbounds v.uStar[1,end] = v.uStar[1,end-1]
+    @inbounds v.uStar[2,end] = v.uStar[2,end-1]
+
+    v.slopesA = computeLimiter(v, v.uStar, 1, v.invDx, v.dU, v.slopesA)
+#    v.slopesQ = computeLimiter(v, v.uStar, 2, v.invDx, v.dU, v.slopesQ)
+    v.slopesU = computeLimiter(v, v.uStar, 2, v.invDx, v.dU, v.slopesQ)	# MODIFIED THIS LINE
+
+    @fastmath @inbounds @simd for i = 1:v.M+2
+        v.Al[i] = v.uStar[1,i] + v.slopesA[i]*v.halfDx
+        v.Ar[i] = v.uStar[1,i] - v.slopesA[i]*v.halfDx
+
+#        v.Ql[i] = v.uStar[2,i] + v.slopesQ[i]*v.halfDx
+#        v.Qr[i] = v.uStar[2,i] - v.slopesQ[i]*v.halfDx
+
+	v.Ul[i] = v.uStar[2,i] + v.slopesU[i]*v.halfDx		# MODIFIED THIS LINE
+	v.Ur[i] = v.uStar[2,i] - v.slopesQ[i]*v.halfDx		# MODIFIED THIS LINE
+    end
+
+    v.Fl = computeFluxCatheter(v, v.Al, v.Ul, v.Fl, b)		# MODIFIED THIS LINE
+    v.Fr = computeFluxCatheter(v, v.Ar, v.Ur, v.Fr, b)		# MODIFIED THIS LINE
+
+    @fastmath @inbounds @simd for i = 1:v.M+1
+        v.flux[1,i] = 0.5*(v.Fr[1,i+1] + v.Fl[1,i] - dxDt*(v.Ar[i+1] - v.Al[i]))
+#        v.flux[2,i] = 0.5*(v.Fr[2,i+1] + v.Fl[2,i] - dxDt*(v.Qr[i+1] - v.Ql[i]))	# REMOVE
+	v.flux[2,i] = 0.5*(v.Fr[2,i+1] + v.Fl[2,i] - dxDt*(v.Ur[i+1] - v.Ul[i]))	# MODIFIED THIS LINE
+    end
+
+    @fastmath @inbounds @simd for i = 2:v.M+1
+        v.A[i-1] = 0.5*(v.A[i-1] + v.uStar[1,i] + invDxDt*(v.flux[1,i-1] - v.flux[1,i]))
+#        v.Q[i-1] = 0.5*(v.Q[i-1] + v.uStar[2,i] + invDxDt*(v.flux[2,i-1] - v.flux[2,i])) # REMOVE
+	v.u[i-1] = 0.5*(v.u[i-1] + v.uStar[2,i] + invDxDt*(v.flux[2,i-1] - v.flux[2,i])) # MODIFIED THIS LINE
+    end
+
+    #source term
+    @fastmath @inbounds @simd for i = 1:v.M
+        s_A = sqrt(v.A[i])
+#        Si = - v.viscT*v.Q[i]/v.A[i] - v.wallE[i]*(s_A - v.s_A0[i])*v.A[i]	# REMOVE 
+        Si = - v.viscT*v.u[i]/(sqrt(v.A[i])-sqrt(v.Ac[i]))^2                    # MODIFIED THIS LINE
+
+        v.u[i] += dt*Si								# MODIFIED THIS LINE
+
+        v.P[i] = pressure(s_A*v.s_inv_A0[i], v.beta[i], v.Pext)
+        v.c[i] = waveSpeed(v.A[i], v.gamma[i], v.Ac[i])
+
+    end
+
+    #parabolic system (viscoelastic part)
+    if v.wallVa[1] != 0.0
+        Td = 1.0/dt + v.wallVb
+        Tlu = -v.wallVa
+        T = Tridiagonal(Tlu[1:end-1], Td, Tlu[2:end])
+
+        d = (1.0/dt - v.wallVb).*v.Q
+        d[1] += v.wallVa[2]*v.Q[2]
+        for i = 2:v.M-1
+            d[i] += v.wallVa[i+1]*v.Q[i+1] + v.wallVa[i-1]*v.Q[i-1]
+        end
+        d[end] += v.wallVa[end-1]*v.Q[end-1]
+
+        v.Q = T\d
+    end
+
+    @fastmath @inbounds @simd for i = 1:v.M
+        v.Q[i] = v.u[i]*v.A[i]			# MODIFIED THIS LINE
+    end
+end
+
+"""
+    computeFluxCatheter(v :: Vessel, A :: Array{Float64,1}, Q :: Array{Float64,1},
+                Flux :: Array{Float64,2})
+"""
+function computeFluxCatheter(v :: Vessel, A :: Array{Float64,1}, U :: Array{Float64,1},
+                     Flux :: Array{Float64,2}, b :: Blood)
+    @fastmath @inbounds @simd for i in 1:v.M+2
+        Flux[1,i] = U[i]*(A[i]-v.Ac[i])
+        Flux[2,i] = U[i]*U[i]/2 + v.P[i]*b.rho_inv
+    end
+
+    return Flux
 end
