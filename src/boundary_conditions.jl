@@ -72,16 +72,16 @@ function inletCompatibility(dt :: Float64, v :: Vessel, h :: Heart)
 	W12, W22 = riemannInvariants(2, v)
 
 	@fastmath @inbounds W11 += (W12 - W11)*(v.c[1] - v.u[1])*dt*v.invDx
-	@fastmath @inbounds W21 = 2.0*v.Q[1]/v.A[1] - W11
+	@fastmath @inbounds W21 = 2.0*v.Q[1]/v.A[1] - W11		# IS THIS CORRECT? OR Q[1]/(v.A[1]-v.Ac[1])??
 
-	v.u[1], v.c[1] = inverseRiemannInvariants(W11, W21)
+	v.u[1], v.c[1] = inverseRiemannInvariants(W11, W21, v)		# MODIFIED THIS LINE
 
 	if h.inlet_type == "Q"
-		@fastmath @inbounds v.A[1] = v.Q[1]/v.u[1]
+		@fastmath @inbounds v.A[1] = v.Q[1]/v.u[1] + v.Ac[1]	# MODIFIED THIS LINE: ADDED  +v.Ac[1]
 		v.P[1] = pressure(v.A[1], v.A0[1], v.beta[1], v.Pext)
 	else
 		v.A[1] = areaFromPressure(v.P[1], v.A0[1], v.beta[1], v.Pext)
-		@fastmath @inbounds v.Q[1] = v.u[1]*v.A[1]
+		@fastmath @inbounds v.Q[1] = v.u[1]*(v.A[1] - v.Ac[1])		# MODIFIED THIS LINE: ADDED -v.Ac[1]
 	end
 
 end
@@ -93,8 +93,8 @@ end
 Calculate Riemann invariants at the node `i` from `u` and `c`.
 """
 function riemannInvariants(i :: Int, v :: Vessel)
-  @fastmath @inbounds W1 = v.u[i] - 4.0*v.c[i]
-  @fastmath @inbounds W2 = v.u[i] + 4.0*v.c[i]
+  @fastmath @inbounds W1 = v.u[i] - 4.0*v.c[i]*v.corrRI		# MODIFIED THIS LINE
+  @fastmath @inbounds W2 = v.u[i] + 4.0*v.c[i]*v.corrRI		# MODIFIED THIS LINE
 
   return W1, W2
 end
@@ -105,9 +105,9 @@ end
 
 Calculate `u` and `c` given `W1` and `W2`
 """
-function inverseRiemannInvariants(W1 :: Float64, W2 :: Float64)
+function inverseRiemannInvariants(W1 :: Float64, W2 :: Float64, v :: Vessel)
   @fastmath u = 0.5*(W1 + W2)
-  @fastmath c = (W2 - W1)*0.125
+  @fastmath c = (W2 - W1)*0.125/v.corrRI
 
   return u, c
 end
@@ -155,7 +155,7 @@ function outletCompatibility(dt :: Float64, v :: Vessel)
 	W1M = v.W1M0 - v.Rt * (W2M - v.W2M0)
 
 	v.u[end], v.c[end] = inverseRiemannInvariants(W1M, W2M)
-	v.Q[end] = v.A[end]*v.u[end]
+	v.Q[end] = (v.A[end] - v.Ac[end])*v.u[end]		# MODIFIED THIS LINE: ADDED -v.Ac[end]
 end
 
 
@@ -172,7 +172,7 @@ function threeElementWindkessel(dt :: Float64, v :: Vessel)
 	Al = v.A[end]
 	ul = v.u[end]
 
-	v.Pc += dt/v.Cc * (Al*ul - (v.Pc - Pout)/v.R2)
+	v.Pc += dt/v.Cc * (Al*ul - (v.Pc - Pout)/v.R2)		# PROBABLY MUST BE (Al-v.Ac[end])*ul
 
 	As = Al
 
