@@ -1,4 +1,4 @@
-project name: single-artery
+project name: catheter
 
 blood:
   rho: 1060.0 # density [kg/m^3]
@@ -19,13 +19,13 @@ network:
     L: 24.14e-2 # length (m)
 
     R0: 9.87e-3 # lumen radius (m)
-    Rc: 1.48e-3 # catether radius (m)
+    Rc: 1.48e-3 # catheter radius (m)
 
     E: 400.0e3 # Young's modulus (Pa)
     h0: 0.82e-3
 
     inlet: Q
-    inlet file: single-artery_inlet.dat
+    inlet file: catheter_inlet.dat
     inlet number: 1
 
     outlet: wk3
